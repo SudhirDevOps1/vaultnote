@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::crypto::{self, KdfParams};
-use crate::db::{ItemRow, Store, StoreError, new_id};
+use crate::db::{new_id, ItemRow, Store, StoreError};
 
 /// A fixed known value, wrapped under the root key at first run. Unwrapping it
 /// is an exact password check — as opposed to "try to decrypt something and
@@ -96,8 +96,8 @@ impl Vault {
         }
         let params = KdfParams::default();
         let salt = crypto::generate_salt();
-        let root_key = crypto::derive_root_key(password, &salt, &params)
-            .map_err(|_| VaultError::Crypto)?;
+        let root_key =
+            crypto::derive_root_key(password, &salt, &params).map_err(|_| VaultError::Crypto)?;
 
         store.set_salt(&salt)?;
         store.set_meta(
@@ -122,10 +122,11 @@ impl Vault {
             .and_then(|h| unhex(&h))
             .ok_or(VaultError::WrongPassword)?;
 
-        let root_key =
-            crypto::derive_root_key(password, &salt, &KdfParams::default()).map_err(|_| VaultError::Crypto)?;
+        let root_key = crypto::derive_root_key(password, &salt, &KdfParams::default())
+            .map_err(|_| VaultError::Crypto)?;
 
-        let unwrapped = crypto::unwrap_key(&root_key, &check).map_err(|_| VaultError::WrongPassword)?;
+        let unwrapped =
+            crypto::unwrap_key(&root_key, &check).map_err(|_| VaultError::WrongPassword)?;
         if unwrapped[..] != VERIFIER {
             return Err(VaultError::WrongPassword);
         }
@@ -218,12 +219,15 @@ impl Vault {
         // A fresh data key per write: no key is ever reused across two
         // encryptions of the same note.
         let data_key = crypto::generate_key();
-        let (nonce, ciphertext) = crypto::encrypt(&data_key, &json).map_err(|_| VaultError::Crypto)?;
-        let wrapped = crypto::wrap_key(&self.root_key, &data_key).map_err(|_| VaultError::Crypto)?;
+        let (nonce, ciphertext) =
+            crypto::encrypt(&data_key, &json).map_err(|_| VaultError::Crypto)?;
+        let wrapped =
+            crypto::wrap_key(&self.root_key, &data_key).map_err(|_| VaultError::Crypto)?;
 
         match self.store.get_item(&item_id)? {
             Some(_) => {
-                self.store.update_item(&item_id, &nonce, &wrapped, &ciphertext)?;
+                self.store
+                    .update_item(&item_id, &nonce, &wrapped, &ciphertext)?;
             }
             None => {
                 let ts = now_ms();
@@ -260,13 +264,15 @@ impl Vault {
     /// Re-wrap every key under a new password. Note bodies are untouched —
     /// this is the whole point of the envelope layout.
     pub fn change_password(&mut self, new_password: &str) -> Result<(), VaultError> {
-        let new_root = crypto::derive_root_key(new_password, &self.salt_stored(), &KdfParams::default())
-            .map_err(|_| VaultError::Crypto)?;
+        let new_root =
+            crypto::derive_root_key(new_password, &self.salt_stored(), &KdfParams::default())
+                .map_err(|_| VaultError::Crypto)?;
 
         let rows = self.store.all_wrapped_keys()?;
         let mut rewrapped = Vec::with_capacity(rows.len());
         for (id, blob) in rows {
-            let data_key = crypto::unwrap_key(&self.root_key, &blob).map_err(|_| VaultError::Crypto)?;
+            let data_key =
+                crypto::unwrap_key(&self.root_key, &blob).map_err(|_| VaultError::Crypto)?;
             let wrapped = crypto::wrap_key(&new_root, &data_key).map_err(|_| VaultError::Crypto)?;
             rewrapped.push((id, wrapped));
         }
@@ -286,7 +292,11 @@ impl Vault {
 
     fn salt_stored(&self) -> [u8; crypto::SALT_LEN] {
         // The salt never changes after first run, so it is always present.
-        self.store.get_salt().ok().flatten().unwrap_or([0u8; crypto::SALT_LEN])
+        self.store
+            .get_salt()
+            .ok()
+            .flatten()
+            .unwrap_or([0u8; crypto::SALT_LEN])
     }
 
     // -- internals ----------------------------------------------------------
@@ -300,8 +310,11 @@ impl Vault {
             return Ok(None);
         }
         let data_key = self.data_key_for(row)?;
-        let plain = crypto::decrypt(&data_key, &row.nonce, &row.ciphertext).map_err(|_| VaultError::Corrupt)?;
-        serde_json::from_slice(&plain).map(Some).map_err(|_| VaultError::Corrupt)
+        let plain = crypto::decrypt(&data_key, &row.nonce, &row.ciphertext)
+            .map_err(|_| VaultError::Corrupt)?;
+        serde_json::from_slice(&plain)
+            .map(Some)
+            .map_err(|_| VaultError::Corrupt)
     }
 
     fn summarise(&self, row: &ItemRow) -> Result<Option<NoteSummary>, VaultError> {
@@ -382,7 +395,8 @@ mod tests {
         let p = temp_path("reopen");
         {
             let mut v = Vault::create(&p.0, PW).unwrap();
-            v.save(None, &note("Bank", "PIN 1234", &["secret"])).unwrap();
+            v.save(None, &note("Bank", "PIN 1234", &["secret"]))
+                .unwrap();
         }
         let v = Vault::open(&p.0, PW).unwrap();
         let notes = v.list().unwrap();
@@ -410,7 +424,10 @@ mod tests {
     fn create_refuses_to_overwrite_existing_vault() {
         let p = temp_path("noclobber");
         Vault::create(&p.0, PW).unwrap();
-        assert!(Vault::create(&p.0, PW).is_err(), "must not silently reset a vault");
+        assert!(
+            Vault::create(&p.0, PW).is_err(),
+            "must not silently reset a vault"
+        );
     }
 
     #[test]
@@ -418,7 +435,8 @@ mod tests {
         let p = temp_path("persist");
         let id = {
             let mut v = Vault::create(&p.0, PW).unwrap();
-            v.save(None, &note("Title", "Body text", &["a", "b"])).unwrap()
+            v.save(None, &note("Title", "Body text", &["a", "b"]))
+                .unwrap()
         };
         let v = Vault::open(&p.0, PW).unwrap();
         let n = v.get(&id).unwrap().unwrap();
@@ -435,18 +453,28 @@ mod tests {
         v.save(Some(&id), &note("After", "new", &[])).unwrap();
         let n = v.get(&id).unwrap().unwrap();
         assert_eq!(n.title, "After");
-        assert_eq!(v.list().unwrap().len(), 1, "update must not create a second row");
+        assert_eq!(
+            v.list().unwrap().len(),
+            1,
+            "update must not create a second row"
+        );
     }
 
     #[test]
     fn search_matches_title_body_and_tags() {
         let p = temp_path("search");
         let mut v = Vault::create(&p.0, PW).unwrap();
-        v.save(None, &note("Groceries", "milk and eggs", &["shopping"])).unwrap();
-        v.save(None, &note("Meeting", "discuss roadmap", &["work"])).unwrap();
+        v.save(None, &note("Groceries", "milk and eggs", &["shopping"]))
+            .unwrap();
+        v.save(None, &note("Meeting", "discuss roadmap", &["work"]))
+            .unwrap();
 
         assert_eq!(v.search("groc").unwrap().len(), 1, "title match");
-        assert_eq!(v.search("EGGS").unwrap().len(), 1, "case-insensitive body match");
+        assert_eq!(
+            v.search("EGGS").unwrap().len(),
+            1,
+            "case-insensitive body match"
+        );
         assert_eq!(v.search("work").unwrap().len(), 1, "tag match");
         assert_eq!(v.search("nothing here").unwrap().len(), 0);
         assert_eq!(v.search("  ").unwrap().len(), 2, "empty query lists all");
@@ -482,7 +510,8 @@ mod tests {
         let p = temp_path("chpw");
         let id = {
             let mut v = Vault::create(&p.0, PW).unwrap();
-            v.save(None, &note("Keep me", "important body", &["tag"])).unwrap()
+            v.save(None, &note("Keep me", "important body", &["tag"]))
+                .unwrap()
         };
 
         let mut v = Vault::open(&p.0, PW).unwrap();
@@ -507,7 +536,9 @@ mod tests {
     fn unicode_and_empty_notes_work() {
         let p = temp_path("unicode");
         let mut v = Vault::create(&p.0, PW).unwrap();
-        let id = v.save(None, &note("🔐 नोट्स", "日本語のテキスト", &["tag-🔑"])).unwrap();
+        let id = v
+            .save(None, &note("🔐 नोट्स", "日本語のテキスト", &["tag-🔑"]))
+            .unwrap();
         let n = v.get(&id).unwrap().unwrap();
         assert_eq!(n.title, "🔐 नोट्स");
         assert_eq!(n.tags, vec!["tag-🔑"]);

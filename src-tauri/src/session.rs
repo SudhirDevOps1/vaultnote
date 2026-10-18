@@ -254,12 +254,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let title = s
-            .with(|v| v.get(&id))
-            .unwrap()
-            .unwrap()
-            .unwrap()
-            .title;
+        let title = s.with(|v| v.get(&id)).unwrap().unwrap().unwrap().title;
         assert_eq!(title, "Secret");
 
         s.lock();

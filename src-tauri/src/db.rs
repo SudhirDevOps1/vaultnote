@@ -10,7 +10,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::crypto;
 
@@ -263,7 +263,8 @@ impl Store {
              FROM items WHERE deleted_at IS NULL ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], row_to_item)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 
     pub fn list_trashed(&self) -> Result<Vec<ItemRow>, StoreError> {
@@ -272,7 +273,8 @@ impl Store {
              FROM items WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
         )?;
         let rows = stmt.query_map([], row_to_item)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 
     pub fn soft_delete(&self, id: &str) -> Result<usize, StoreError> {
@@ -315,8 +317,11 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT id, wrapped_key FROM items ORDER BY id")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StoreError::from)
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
     }
 }
 
@@ -397,7 +402,10 @@ mod tests {
     #[test]
     fn open_creates_schema_and_version() {
         let s = Store::open_memory().unwrap();
-        assert_eq!(s.get_meta("schema_version").unwrap().as_deref(), Some(SCHEMA_VERSION));
+        assert_eq!(
+            s.get_meta("schema_version").unwrap().as_deref(),
+            Some(SCHEMA_VERSION)
+        );
         assert!(s.get_meta("created_at").unwrap().is_some());
     }
 
@@ -423,7 +431,14 @@ mod tests {
     fn update_replaces_ciphertext_and_keeps_identity() {
         let mut s = Store::open_memory().unwrap();
         s.insert_item(&dummy_row("a")).unwrap();
-        let n = s.update_item("a", &[7u8; crypto::NONCE_LEN], &[8u8; crypto::WRAP_LEN], &[9u8; 10]).unwrap();
+        let n = s
+            .update_item(
+                "a",
+                &[7u8; crypto::NONCE_LEN],
+                &[8u8; crypto::WRAP_LEN],
+                &[9u8; 10],
+            )
+            .unwrap();
         assert_eq!(n, 1);
         let got = s.get_item("a").unwrap().unwrap();
         assert_eq!(got.ciphertext, vec![9u8; 10]);

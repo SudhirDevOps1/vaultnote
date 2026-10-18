@@ -1,0 +1,115 @@
+name: CI
+
+# Builds run on GitHub's runners, not on a contributor's machine. That matters
+# here: this project was developed on a 2-core 15W ultrabook where a local
+# `cargo build` saturates the CPU and shuts the machine down. See
+# scripts/build-safe.ps1 for the local workaround.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Quieter, deterministic diagnostics.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  frontend:
+    name: Frontend — typecheck + build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `tsc --noEmit && vite build` — the typecheck is the gate here, not the
+      # bundle size.
+      - name: Typecheck and build
+        run: pnpm build
+
+  rust:
+    name: Rust — check, test, clippy
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # `tauri_build` and `generate_context!` resolve `frontendDist` at compile
+      # time. This job does not build the frontend, so it plants a placeholder
+      # rather than running a second pnpm build.
+      - name: Placeholder dist for tauri-build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ../dist | Out-Null
+          '<!doctype html><title>placeholder</title>' | Set-Content ../dist/index.html
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+      # The gates that matter, in order:
+      #   crypto.rs   — Argon2id + XChaCha20-Poly1305 properties
+      #   db.rs       — schema and CRUD
+      #   vault.rs    — end-to-end note lifecycle
+      #   session.rs  — idle auto-lock
+      #   vault_leakage.rs — plaintext markers absent from vault.db and its WAL
+      - name: cargo test
+        run: cargo test -- --test-threads=1
+
+      - name: clippy
+        run: cargo clippy --all-targets
+
+      - name: rustfmt check
+        run: cargo fmt --all -- --check
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Cheap guard against the one mistake that cannot be undone: committing a
+      # vault.db. The file is encrypted, but committing it would still put the
+      # user's notes in git history forever.
+      - name: Assert no vault or key material is tracked
+        run: |
+          set -euo pipefail
+          failed=0
+          for pattern in '*.db' '*.db-wal' '*.db-shm' '*.vaultnote' '*.key' '*.pem' '*.p12' '.env'; do
+            found=$(git ls-files --cached -- "$pattern" || true)
+            if [ -n "$found" ]; then
+              echo "::error::Tracked files match $pattern:"
+              echo "$found"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "::error::Key or vault material is tracked in git."
+            exit 1
+          fi
+          echo "No vault or key material tracked."

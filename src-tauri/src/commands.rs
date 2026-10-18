@@ -128,5 +128,7 @@ pub fn change_password(
     if new_password.chars().count() < 8 {
         return Err("password must be at least 8 characters".into());
     }
-    session.with(|v| v.change_password(&new_password)).map_err(err)
+    session
+        .with(|v| v.change_password(&new_password))
+        .map_err(err)
 }

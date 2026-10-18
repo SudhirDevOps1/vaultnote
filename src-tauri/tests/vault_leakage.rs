@@ -28,15 +28,16 @@ impl Drop for Cleanup {
 }
 
 fn vault_path(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "vaultnote-leak-{tag}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ))
-    .with_extension("db")
+    std::env::temp_dir()
+        .join(format!(
+            "vaultnote-leak-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+        .with_extension("db")
 }
 
 fn read_if_present(p: &PathBuf) -> Option<Vec<u8>> {
@@ -59,7 +60,11 @@ fn vault_file_and_wal_contain_no_plaintext() {
             v.save(
                 None,
                 &Note {
-                    title: if i == 0 { TITLE.into() } else { format!("Filler {i}") },
+                    title: if i == 0 {
+                        TITLE.into()
+                    } else {
+                        format!("Filler {i}")
+                    },
                     text: if i == 0 {
                         BODY.into()
                     } else {
@@ -133,7 +138,10 @@ fn reopening_reveals_the_plaintext_that_was_hidden() {
     };
 
     let bytes = fs::read(&path).unwrap();
-    assert!(!find_subslice(&bytes, TITLE.as_bytes()), "title leaked to disk");
+    assert!(
+        !find_subslice(&bytes, TITLE.as_bytes()),
+        "title leaked to disk"
+    );
 
     let v = Vault::open(&path, PASSWORD).unwrap();
     let n = v.get(&id).unwrap().expect("note must still exist");

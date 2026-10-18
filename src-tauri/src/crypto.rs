@@ -143,10 +143,7 @@ pub fn generate_salt() -> Zeroizing<[u8; SALT_LEN]> {
 // ---------------------------------------------------------------------------
 
 /// Encrypt `plaintext`, returning `(nonce, ciphertext || tag)`.
-pub fn encrypt(
-    key: &[u8; KEY_LEN],
-    plaintext: &[u8],
-) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
+pub fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
     let cipher = cipher_from(key)?;
     let mut nonce = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce);
@@ -196,7 +193,10 @@ pub fn wrap_key(
 /// This is what runs during unlock: it is how a wrong password is detected —
 /// with high probability the unwrap fails authentication, and with a
 /// probability on the order of 2^-256 the note body then fails to decrypt.
-pub fn unwrap_key(root_key: &[u8; KEY_LEN], blob: &[u8]) -> Result<Zeroizing<[u8; KEY_LEN]>, CryptoError> {
+pub fn unwrap_key(
+    root_key: &[u8; KEY_LEN],
+    blob: &[u8],
+) -> Result<Zeroizing<[u8; KEY_LEN]>, CryptoError> {
     if blob.len() != WRAP_LEN {
         return Err(CryptoError::BadWrap);
     }
@@ -237,7 +237,10 @@ mod tests {
         let key = generate_key();
         let (nonce, mut ct) = encrypt(&key, b"authentic").unwrap();
         ct[0] ^= 0x01;
-        assert_eq!(decrypt(&key, &nonce, &ct).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt(&key, &nonce, &ct).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]
@@ -245,7 +248,10 @@ mod tests {
         let key = generate_key();
         let (mut nonce, ct) = encrypt(&key, b"authentic").unwrap();
         nonce[0] ^= 0x01;
-        assert_eq!(decrypt(&key, &nonce, &ct).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt(&key, &nonce, &ct).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]
@@ -255,7 +261,10 @@ mod tests {
             let (n, c) = encrypt(&k, b"authentic").unwrap();
             (k, n, c)
         };
-        assert_eq!(decrypt(&generate_key(), &nonce, &ct).unwrap_err(), CryptoError::Decrypt);
+        assert_eq!(
+            decrypt(&generate_key(), &nonce, &ct).unwrap_err(),
+            CryptoError::Decrypt
+        );
     }
 
     #[test]
@@ -318,7 +327,10 @@ mod tests {
         let root = derive_root_key("right", &salt, &KdfParams::fast()).unwrap();
         let blob = wrap_key(&root, &generate_key()).unwrap();
         let wrong = derive_root_key("wrong", &salt, &KdfParams::fast()).unwrap();
-        assert_eq!(unwrap_key(&wrong, &blob).unwrap_err().to_string(), "key derivation failed");
+        assert_eq!(
+            unwrap_key(&wrong, &blob).unwrap_err().to_string(),
+            "key derivation failed"
+        );
     }
 
     #[test]
