@@ -1,0 +1,43 @@
+[package]
+name = "vaultnote"
+version = "0.1.0"
+description = "Local-first end-to-end encrypted notes"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "vaultnote_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Storage is driven from Rust, not from JS. `bundled` compiles SQLite from
+# source so no system SQLite is required.
+rusqlite = { version = "0", features = ["bundled"] }
+
+# Crypto
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+
+# This machine is a 2-core 2016 ultrabook. `debug = 0` skips debug-info
+# generation, which is a large share of the codegen work and of the disk
+# writes during a cold build.
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

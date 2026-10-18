@@ -1,0 +1,11 @@
+# Build throttling.
+#
+# This machine is an i5-6300U: 2 physical cores, 15W TDP laptop. Cargo's
+# default is one job per logical core, which on a thin ultrabook means every
+# core is saturated at once, the package hits its thermal limit, and the
+# clock drops (or the machine shuts down).
+#
+# Two jobs keeps both cores busy without the sustained all-core load that
+# triggers thermal shutdown. Raise this only if the machine is well cooled.
+[build]
+jobs = 2

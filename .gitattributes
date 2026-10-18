@@ -1,0 +1,18 @@
+# Normalise line endings so the repo behaves the same on Windows, Linux and macOS.
+* text=auto eol=lf
+
+# PowerShell is happiest with CRLF on Windows.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binaries — never touched.
+*.png binary
+*.ico binary
+*.db binary
+*.exe binary
+
+# Lock files are committed on purpose: without Cargo.lock nobody can verify
+# which argon2 / chacha20poly1305 build this was reviewed against.
+src-tauri/Cargo.lock text eol=lf -diff
+pnpm-lock.yaml text eol=lf -diff

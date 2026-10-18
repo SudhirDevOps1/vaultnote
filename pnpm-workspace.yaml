@@ -1,0 +1,11 @@
+# pnpm 12 settings live here, not in package.json.
+#
+# `allowBuilds` is a map of package -> allow/disallow build scripts. Under the
+# default strictDepBuilds:true, any dependency with an unreviewed postinstall
+# fails the install with ERR_PNPM_IGNORED_BUILDS.
+#
+# esbuild ships a platform-specific binary via a postinstall step, so Vite
+# cannot run until it is approved. This is an explicit, reviewed allow —
+# not a blanket dangerouslyAllowAllBuilds.
+allowBuilds:
+  esbuild: true

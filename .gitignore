@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+
+# Rust build output — ~2 GB on this machine, must never be committed
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# The vault. This is the file that holds encrypted notes.
+# Ignored anywhere in the tree, not just the root: a stray copy under
+# src-tauri/ or a backup/ folder would leak the same way.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+vaultnote.backup
+
+# Encrypted exports — these are portable backups of real note content
+*.vaultnote
+
+# Secrets and keys. Nothing in this project should ever produce one of these;
+# if one appears, it is a mistake worth stopping on.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Bundler scratch
+src-tauri/bundle/
