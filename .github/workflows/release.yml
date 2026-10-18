@@ -56,6 +56,31 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      # Hard stop, and deliberately independent of the release-please config.
+      #
+      # bump-minor-pre-major keeps release-please from proposing 1.0.0, but
+      # nothing stops a human from typing `git tag v1.0.0` by hand. This app
+      # has never been built into a binary or launched once, so a tag without a
+      # pre-release suffix would publish installers labelled as stable on the
+      # strength of code that has only ever been unit tested.
+      #
+      # To lift this, delete this step once the app has been run for real and
+      # the checklist in README "Known gaps" has actually been closed.
+      - name: Refuse a non-prerelease tag
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.tag.outputs.tag }}"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+-(alpha|beta|rc)') {
+            throw @"
+Refusing to publish $tag.
+
+Only pre-release tags are allowed while the application is unverified: it
+has never been built into a binary or launched. Tag as v0.1.0-alpha.1
+instead, or delete this guard once the app has actually been run.
+"@
+          }
+          Write-Host "$tag is a pre-release tag - proceeding"
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
