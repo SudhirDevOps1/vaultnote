@@ -90,8 +90,6 @@ jobs:
           workspaces: src-tauri -> target
           cache-on-failure: true
           shared-key: rust
-          # Clean in the sense of "skip cargo clean", not "delete the cache".
-          clean: false
 
       - name: Report cargo cache state
         shell: pwsh
