@@ -12,7 +12,7 @@ pub mod db;
 pub mod session;
 pub mod vault;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -47,7 +47,7 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    tauri::async_runtime::sleep(tick).await;
+                    tokio::time::sleep(tick).await;
                     let session = handle.state::<session::SessionManager>();
                     if session.lock_if_idle() {
                         let _ = handle.emit("vault-locked", ());

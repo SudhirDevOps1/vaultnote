@@ -16,7 +16,7 @@ use crate::db::{new_id, ItemRow, Store, StoreError};
 /// is an exact password check — as opposed to "try to decrypt something and
 /// see if it fails", which would accept a wrong password with probability
 /// 2^-256 and is harder to reason about.
-const VERIFIER: [u8; crypto::KEY_LEN] = *b"vaultnote-password-verifier-v1!";
+const VERIFIER: [u8; crypto::KEY_LEN] = *b"vaultnote-password-verifier-v01!";
 
 /// Plaintext shape of a note. Exists in memory only.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,7 +43,7 @@ pub struct NoteSummary {
     pub updated_at: i64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum VaultError {
     /// The password did not unwrap the verifier.
     WrongPassword,
@@ -155,9 +155,11 @@ impl Vault {
     }
 
     pub fn get(&self, id: &str) -> Result<Option<Note>, VaultError> {
+        // `decrypt_note` already returns an Option — a row that is not a note
+        // yields None rather than being a decrypt failure.
         match self.store.get_item(id)? {
             None => Ok(None),
-            Some(row) => Ok(Some(self.decrypt_note(&row)?)),
+            Some(row) => self.decrypt_note(&row),
         }
     }
 
@@ -286,7 +288,9 @@ impl Vault {
             &hex(&crypto::wrap_key(&new_root, &VERIFIER).map_err(|_| VaultError::Crypto)?),
         )?;
 
-        *self.root_key = new_root;
+        // Assign rather than deref-assign: both sides are `Zeroizing`, and
+        // overwriting drops the old key so it gets wiped.
+        self.root_key = new_root;
         Ok(())
     }
 
@@ -408,7 +412,12 @@ mod tests {
     fn wrong_password_is_rejected() {
         let p = temp_path("wrongpw");
         Vault::create(&p.0, PW).unwrap();
-        let err = Vault::open(&p.0, "not the password").unwrap_err();
+        // `unwrap_err` would need `Vault: Debug`, and Vault owns a rusqlite
+        // connection which is not Debug. Match instead.
+        let err = match Vault::open(&p.0, "not the password") {
+            Err(e) => e,
+            Ok(_) => panic!("a wrong password must not open the vault"),
+        };
         assert_eq!(err, VaultError::WrongPassword);
     }
 

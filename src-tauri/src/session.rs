@@ -131,16 +131,26 @@ impl SessionManager {
     /// Run `f` against the open vault, refreshing the idle timer first.
     ///
     /// This is the only way a command should reach note data.
-    pub fn with<R>(&self, f: impl FnOnce(&mut Vault) -> R) -> Result<R, VaultError> {
+    ///
+    /// `f` returns a `Result` rather than a bare value so the vault's own
+    /// error is not wrapped in a second `Result` that every caller would then
+    /// have to flatten by hand.
+    pub fn with<R>(
+        &self,
+        f: impl FnOnce(&mut Vault) -> Result<R, VaultError>,
+    ) -> Result<R, VaultError> {
         let mut inner = self.lock_inner();
         let now = Instant::now();
         self.expire_if_idle(&mut inner, now);
+        if inner.vault.is_none() {
+            return Err(VaultError::WrongPassword);
+        }
+        // Set before borrowing the vault, so the two mutable borrows of
+        // `inner` do not overlap.
+        inner.last_activity = Some(now);
         match inner.vault.as_mut() {
+            Some(vault) => f(vault),
             None => Err(VaultError::WrongPassword),
-            Some(vault) => {
-                inner.last_activity = Some(now);
-                Ok(f(vault))
-            }
         }
     }
 
@@ -195,7 +205,7 @@ mod tests {
         let p = temp_path("weak");
         let s = SessionManager::default();
         assert_eq!(s.create(&p, "short"), Err(VaultError::WeakPassword));
-        assert!(s.is_unlocked() == false);
+        assert!(!s.is_unlocked());
         let _ = std::fs::remove_file(&p);
     }
 
@@ -205,9 +215,9 @@ mod tests {
         let s = SessionManager::default();
         s.create(&p, PW).unwrap();
         s.lock();
-        assert!(s.with(|_| ()).is_err());
+        assert!(s.with(|_| Ok::<(), VaultError>(())).is_err());
         assert_eq!(s.unlock(&p, PW).map(|_| ()), Ok(()));
-        assert!(s.with(|_| ()).is_ok());
+        assert!(s.with(|_| Ok::<(), VaultError>(())).is_ok());
         let _ = std::fs::remove_file(&p);
     }
 
@@ -220,7 +230,10 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(20));
         // The timer thread may not have run; the accessor must still refuse.
-        assert!(s.with(|_| ()).is_err(), "idle session must not serve data");
+        assert!(
+            s.with(|_| Ok::<(), VaultError>(())).is_err(),
+            "idle session must not serve data"
+        );
         assert!(!s.is_unlocked());
         let _ = std::fs::remove_file(&p);
     }
@@ -230,7 +243,7 @@ mod tests {
         let p = temp_path("zero");
         let s = SessionManager::new(Duration::ZERO);
         s.create(&p, PW).unwrap();
-        assert!(s.with(|_| ()).is_err());
+        assert!(s.with(|_| Ok::<(), VaultError>(())).is_err());
         let _ = std::fs::remove_file(&p);
     }
 
@@ -251,10 +264,9 @@ mod tests {
                     },
                 )
             })
-            .unwrap()
             .unwrap();
 
-        let title = s.with(|v| v.get(&id)).unwrap().unwrap().unwrap().title;
+        let title = s.with(|v| v.get(&id)).unwrap().unwrap().title;
         assert_eq!(title, "Secret");
 
         s.lock();

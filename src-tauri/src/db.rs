@@ -51,6 +51,15 @@ pub enum StoreError {
     BadSalt,
 }
 
+/// Compares variants only. `rusqlite::Error` is not `PartialEq`, and the
+/// inner error is deliberately not surfaced to callers anyway — equality here
+/// only needs to answer "same failure class?".
+impl PartialEq for StoreError {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
