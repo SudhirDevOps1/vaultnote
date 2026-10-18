@@ -90,7 +90,7 @@ impl Vault {
     /// open session. There is no recovery path from here — the password is the
     /// only key.
     pub fn create(path: &Path, password: &str) -> Result<Self, VaultError> {
-        let mut store = Store::open(path)?;
+        let store = Store::open(path)?;
         if store.get_meta("password_check")?.is_some() {
             return Err(VaultError::WrongPassword);
         }
