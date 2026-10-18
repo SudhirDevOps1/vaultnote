@@ -64,6 +64,14 @@ jobs:
       - name: Typecheck and build
         run: pnpm build
 
+      # TypeScript cannot see across the IPC boundary. Every `invoke("x")` is a
+      # string, and a Rust command with the wrong name or a renamed argument
+      # typechecks perfectly and then throws at runtime, so the app launches and
+      # every button fails. Nothing had ever executed this boundary before the
+      # first build; this makes a mismatch a test failure instead of a surprise.
+      - name: Check JS invoke() names against Rust commands
+        run: python scripts/check_ipc.py
+
   rust:
     name: Rust — check, test, clippy
     runs-on: windows-latest

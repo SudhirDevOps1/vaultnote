@@ -160,11 +160,34 @@ jobs:
             }
           }
 
+      # Uploaded BEFORE the release is attached, and not conditional on it.
+      #
+      # The artifact is the only download path that does not depend on
+      # release-please having already created a GitHub Release. With this step
+      # last, a tag pushed by hand produced a successful build and then no
+      # installer at all: the attach step threw because no release existed, and
+      # that skipped the upload. The build was green and the binary was
+      # unreachable.
+      #
+      # Retention is short because this is a pre-1.0 build of an application
+      # that has never been run; the release is the durable home.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaultnote-${{ steps.tag.outputs.tag }}
+          path: src-tauri/target/release/bundle/**/*.exe
+          retention-days: 30
+
       # Uploads to an existing release rather than creating one. Version,
       # changelog and the release itself are owned by release-please; this
       # workflow's only job is producing binaries and attaching them. Two
       # workflows racing to `gh release create` is a deadlock waiting to happen.
+      #
+      # Non-fatal, because the artifact upload above has already captured the
+      # installers by this point. Failing here would turn "no release yet" into
+      # "no installer anywhere", which is the situation this ordering exists to
+      # prevent.
       - name: Attach installers to the release
+        continue-on-error: true
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -174,13 +197,9 @@ jobs:
                      Where-Object { $_.Extension -in ".exe", ".msi" })
           if ($files.Count -eq 0) { throw "no installer artifacts were produced" }
           if (-not (gh release view $env:TAG 2>$null)) {
-            throw "release $env:TAG does not exist. release-please creates it; this workflow only attaches binaries."
+            Write-Host "::warning::No GitHub Release for $env:TAG. release-please creates it."
+            Write-Host "Installers are still downloadable from this run's artifact: vaultnote-$env:TAG"
+            exit 0
           }
           gh release upload $env:TAG $files.FullName --clobber
           Write-Host "attached $($files.Count) installer(s) to $env:TAG"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vaultnote-${{ steps.tag.outputs.tag }}
-          path: src-tauri/target/release/bundle/**/*.exe
-          retention-days: 30

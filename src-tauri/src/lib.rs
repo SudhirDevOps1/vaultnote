@@ -12,12 +12,19 @@ pub mod db;
 pub mod session;
 pub mod vault;
 
+use std::time::Duration;
+
 use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let manager = session::SessionManager::default();
-    let tick = manager.idle_timeout() / 4;
+
+    // `sleep(0)` completes immediately, so a timeout under four seconds would
+    // turn this ticker into a tight loop pinning a core. The default is five
+    // minutes and the tests use one millisecond, and `idle_timeout_seconds` is
+    // already exposed over IPC, so a short value is a future change away.
+    let tick: Duration = (manager.idle_timeout() / 4).max(Duration::from_secs(1));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())

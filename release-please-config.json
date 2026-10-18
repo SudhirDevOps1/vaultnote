@@ -9,6 +9,8 @@
       "draft": false,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": false,
+      "prerelease": true,
+      "prerelease-type": "alpha",
       "extra-files": [
         {
           "type": "json",
@@ -29,6 +31,14 @@
     "",
     "The sync lives in the release workflow rather than in CI because the",
     "build is what needs the three files to agree; leaving them out of sync on",
-    "main is harmless as long as release.yml fixes them before packaging."
+    "main is harmless as long as release.yml fixes them before packaging.",
+    "",
+    "prerelease/prerelease-type exist because release.yml refuses any tag",
+    "without an alpha|beta|rc suffix. Without them release-please cut v0.1.0,",
+    "the guard rejected it, and no release could ever be published - the two",
+    "configurations contradicted each other rather than one overriding the",
+    "other. Pre-releases resolve it at the source rather than by weakening",
+    "the guard. Set prerelease to false once the app has actually been run",
+    "and the gaps in README have been closed."
   ]
 }
