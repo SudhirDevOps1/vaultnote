@@ -180,7 +180,7 @@ mod tests {
     fn temp_path(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "vaultnote-session-{tag}-{}.db",
-            crate::db::new_id()[..8].to_string()
+            &crate::db::new_id()[..8]
         ))
     }
 

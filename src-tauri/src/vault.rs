@@ -4,6 +4,7 @@
 //! (`db`) only ever sees ciphertext. The root key lives in this struct and in
 //! `session` — never in a `#[tauri::command]` return value.
 
+use std::cmp::Reverse;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -150,7 +151,9 @@ impl Vault {
                 out.push(s);
             }
         }
-        out.sort_by(|a, b| (b.pinned, b.updated_at).cmp(&(a.pinned, a.updated_at)));
+        // Pinned first, then most recently updated. Both comparisons are reversed
+        // rather than written out longhand.
+        out.sort_by_key(|n| (Reverse(n.pinned), Reverse(n.updated_at)));
         Ok(out)
     }
 
@@ -375,10 +378,7 @@ mod tests {
     }
 
     fn temp_path(tag: &str) -> TempVault {
-        let p = std::env::temp_dir().join(format!(
-            "vaultnote-test-{tag}-{}.db",
-            new_id()[..8].to_string()
-        ));
+        let p = std::env::temp_dir().join(format!("vaultnote-test-{tag}-{}.db", &new_id()[..8]));
         TempVault(p)
     }
 
