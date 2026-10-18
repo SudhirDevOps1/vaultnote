@@ -17,6 +17,8 @@ export default function App() {
   const [showTrash, setShowTrash] = useState(false);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [trashed, setTrashed] = useState<NoteSummary[]>([]);
+  const [searched, setSearched] = useState<NoteSummary[]>([]);
 
   // ---- lifecycle ---------------------------------------------------------
 
@@ -30,13 +32,34 @@ export default function App() {
     api.status().then(setStatus).catch((e) => setError(String(e)));
   }, []);
 
+  // Everything the webview is holding that came out of the vault. Rust drops
+  // the root key the moment the idle ticker fires; the decrypted note body and
+  // the note *titles* sitting in React state have to be dropped at the same
+  // moment, or the process keeps plaintext it is no longer entitled to hold.
+  // The explicit Lock button already did this; the idle-lock event did not.
+  const clearWorkspace = useCallback(() => {
+    setNotes([]);
+    setTags([]);
+    setTrashed([]);
+    setSearched([]);
+    setActiveId(null);
+    setNote(emptyNote());
+    setIsNew(false);
+    setTagFilter(null);
+    setQuery("");
+    setShowTrash(false);
+  }, []);
+
   // Rust tells us when the idle ticker dropped the key.
   useEffect(() => {
-    const un = listen("vault-locked", () => setStatus("locked"));
+    const un = listen("vault-locked", () => {
+      setStatus("locked");
+      clearWorkspace();
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
     };
-  }, []);
+  }, [clearWorkspace]);
 
   const onUnlocked = useCallback(async () => {
     setStatus("unlocked");
@@ -115,14 +138,10 @@ export default function App() {
   const lock = useCallback(async () => {
     await api.lock();
     setStatus("locked");
-    setActiveId(null);
-    setNote(emptyNote());
-    setIsNew(false);
-  }, []);
+    clearWorkspace();
+  }, [clearWorkspace]);
 
   // ---- derived -----------------------------------------------------------
-
-  const [trashed, setTrashed] = useState<NoteSummary[]>([]);
 
   useEffect(() => {
     if (!showTrash) return;
@@ -139,8 +158,6 @@ export default function App() {
       }
     }
   }, [trashed, activeId, showTrash]);
-
-  const [searched, setSearched] = useState<NoteSummary[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => {
