@@ -16,7 +16,10 @@
 //!
 //! Vectors are produced by `scripts/gen_kat.py` and live in `kat_vectors.rs`.
 
-#[path = "kat_vectors.rs"]
+// Vectors live in a subdirectory on purpose: cargo treats every *.rs directly
+// under tests/ as its own integration-test target, which would compile the
+// data file as a binary with no tests in it.
+#[path = "vectors/kat.rs"]
 mod kat_vectors;
 
 use kat_vectors::{ARGON2ID_KATS, XCHACHA_KATS};

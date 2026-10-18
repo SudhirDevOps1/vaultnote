@@ -28,6 +28,7 @@ The script writes the file itself rather than relying on shell redirection:
 PowerShell's `>` emits UTF-16, which is not a valid Rust source encoding.
 """
 
+import os
 import sys
 
 from argon2.low_level import Type, hash_secret_raw
@@ -53,6 +54,10 @@ LIBSODIUM_MSG = (
     b"only one tip for the future, sunscreen would be it."
 )
 
+# Must match crypto::SALT_LEN and crypto::KEY_LEN.
+SALT_LEN = 16
+KEY_LEN = 32
+
 
 def xchacha_cases():
     cases = [
@@ -77,7 +82,7 @@ ARGON2_CASES = [
     # (label, password, salt, m_cost KiB, t_cost, p_cost, out_len)
     ("fast_8mib_t1", b"correct horse", bytes([7] * 16), 8 * 1024, 1, 1, 32),
     ("fast_8mib_t2", b"correct horse", bytes([7] * 16), 8 * 1024, 2, 1, 32),
-    ("libargon2_style", b"password", b"somesalt", 16 * 1024, 2, 1, 32),
+    ("libargon2_style", b"password", b"somesalt16byte!!", 16 * 1024, 2, 1, 32),
     # The configuration the app actually ships with.
     ("default_64mib_t3", b"correct horse", bytes([7] * 16), 64 * 1024, 3, 1, 32),
     # Non-ASCII must behave identically to any other byte string.
@@ -90,6 +95,19 @@ ARGON2_CASES = [
 def argon2_cases():
     out = []
     for label, pw, salt, m, t, p, out_len in ARGON2_CASES:
+        # The emitted struct field is a fixed [u8; 16], so catch a short salt
+        # here rather than as a compile error in the generated file.
+        if len(salt) != SALT_LEN:
+            raise SystemExit(
+                f"vector {label!r}: salt is {len(salt)} bytes, "
+                f"expected {SALT_LEN}. Argon2 accepts 8..=64, but the generated "
+                f"Rust field is a fixed [u8; {SALT_LEN}]."
+            )
+        if out_len != 32:
+            raise SystemExit(
+                f"vector {label!r}: out_len is {out_len}, expected 32 "
+                f"(crypto::KEY_LEN)."
+            )
         h = hash_secret_raw(
             secret=pw, salt=salt, time_cost=t, memory_cost=m,
             parallelism=p, hash_len=out_len, type=Type.ID, version=19,
@@ -184,7 +202,12 @@ def main():
         emit()
         return
 
-    dest = args[0] if args else "src-tauri/tests/kat_vectors.rs"
+    dest = args[0] if args else "src-tauri/tests/vectors/kat.rs"
+    # Explicit UTF-8, no BOM, LF endings: a valid Rust source file regardless
+    # of what shell the script is invoked from. Also creates the directory,
+    # and the file lives in a subdirectory so cargo does not treat it as its
+    # own integration-test target.
+    os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
     # Explicit UTF-8, no BOM, LF endings: a valid Rust source file regardless
     # of what shell the script is invoked from.
     with open(dest, "w", encoding="utf-8", newline="\n") as fh:
