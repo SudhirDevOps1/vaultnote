@@ -1,0 +1,37 @@
+name: Release Please
+
+# Owns the version, the changelog and the tag.
+#
+# It opens a "chore(main): release X" PR containing the bumped manifests and
+# a regenerated CHANGELOG. Merging that PR creates the tag, and the tag in turn
+# triggers release.yml, which builds the Windows installers and attaches them
+# to the same release.
+#
+# So the loop is:  commit -> merge release PR -> tag -> installers -> release.
+#
+# This depends on conventional commit messages (feat:, fix:, docs:, chore:).
+# Freeform commit subjects are ignored for versioning purposes and will
+# silently produce an empty changelog.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

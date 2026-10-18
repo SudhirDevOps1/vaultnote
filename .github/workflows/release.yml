@@ -114,7 +114,11 @@ jobs:
             }
           }
 
-      - name: Create GitHub release
+      # Uploads to an existing release rather than creating one. Version,
+      # changelog and the release itself are owned by release-please; this
+      # workflow's only job is producing binaries and attaching them. Two
+      # workflows racing to `gh release create` is a deadlock waiting to happen.
+      - name: Attach installers to the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -123,14 +127,11 @@ jobs:
           $files = @(Get-ChildItem "src-tauri/target/release/bundle" -Recurse -File -ErrorAction SilentlyContinue |
                      Where-Object { $_.Extension -in ".exe", ".msi" })
           if ($files.Count -eq 0) { throw "no installer artifacts were produced" }
-
-          gh release create $env:TAG `
-            $files.FullName `
-            --title "Vaultnote $env:TAG" `
-            --generate-notes `
-            --prerelease:$([bool]($env:TAG -match 'alpha|beta|rc')) `
-            --verify-tag
-          Write-Host "released $env:TAG"
+          if (-not (gh release view $env:TAG 2>$null)) {
+            throw "release $env:TAG does not exist. release-please creates it; this workflow only attaches binaries."
+          }
+          gh release upload $env:TAG $files.FullName --clobber
+          Write-Host "attached $($files.Count) installer(s) to $env:TAG"
 
       - uses: actions/upload-artifact@v4
         with:

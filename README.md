@@ -19,27 +19,39 @@ honest state of each claim.
 
 | Phase | State | Evidence |
 |---|---|---|
-| 0 · Toolchain + scaffold | done | Rust 1.99.1, MSVC 14.44, pnpm install clean, frontend builds |
-| 1 · Crypto core | **code written, not yet compiled** | 14 tests written in `src-tauri/src/crypto.rs` |
-| 2 · Storage | **code written, not yet compiled** | 11 unit tests + 2 leakage tests written |
-| 3 · UI | **code written, not yet compiled** | Frontend typechecks; Tauri binary never built |
-| 4+ · Search, attachments, export | not started | — |
+| 0 · Toolchain + scaffold | done | Rust 1.99.1, MSVC 14.44, CI green |
+| 1 · Crypto core | **verified** | 42 unit tests + 6 cross-implementation KATs |
+| 2 · Storage | **verified** | schema, CRUD, and the plaintext-leakage gate |
+| 3 · UI | **written, never run** | typechecks; the app has never been launched |
+| 4+ · Attachments, export | not started | — |
 
-**No claim in this README is verified by a passing build yet.** The Rust side
-has never been compiled. Treat "done" as "written", not "working".
+**50 tests pass, 0 fail.** That is a real number, but it says nothing about
+whether the application works, because the application has never been started.
+
+### What "verified" means here, and what it does not
+
+The crypto is checked **against other implementations**, not against itself:
+
+| Checked | Against |
+|---|---|
+| XChaCha20-Poly1305 output | libsodium, via PyNaCl |
+| Argon2id output | the PHC reference C implementation, via argon2-cffi |
+| AEAD associated-data binding | libsodium's published vector |
+| Plaintext absence in `vault.db` | raw byte search, with a recovery check |
+
+A property suite — round-trips, tamper detection — passes on a subtly wrong
+implementation just as happily as on a correct one. These are not that.
 
 ### Known gaps, stated up front
 
-- **No external known-answer tests.** The crypto tests are property-based
-  (round-trip, tamper detection, determinism, sensitivity to each KDF input).
-  They are *not* checked against RFC 9106 or a libsodium vector. A property
-  suite can pass on a subtly wrong implementation; a KAT cannot. This is the
-  single most important thing to fix before trusting this app with real notes.
-- **No recovery.** Lose the master password and the data is gone. There is no
-  reset, no email, no key escrow — deliberately, because every recovery path is
-  a decryption path for someone else.
+- **The app has never been built or launched.** Every claim above concerns the
+  crypto and storage layers. Whether the UI works is unknown.
+- **No recovery.** Lose the master password and the data is gone. No reset, no
+  email, no key escrow — deliberately, because every recovery path is a
+  decryption path for someone else.
+- **No code signing.** Installers will trigger SmartScreen.
 - **No sync, no mobile.** Out of scope by decision (design doc §2).
-- **Metadata leaks.** Row count, sizes and update times are visible in the
+- **Metadata leaks.** Row counts, sizes and update times are visible in the
   database file. Titles, bodies and tags are not.
 
 ---
