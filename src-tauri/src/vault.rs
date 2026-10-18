@@ -456,11 +456,12 @@ impl Vault {
 
         let mut out = Vec::with_capacity(info.size as usize);
         for index in 0..info.chunks {
-            let (nonce, ct) = self
+            let chunk = self
                 .store
                 .get_attachment_chunk(id, index)?
                 .ok_or(VaultError::Corrupt)?;
-            let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
+            let plain = crypto::decrypt(&data_key, &chunk.nonce, &chunk.ciphertext)
+                .map_err(|_| VaultError::Corrupt)?;
             // `plain` is Zeroizing<Vec<u8>>; index it rather than borrowing the
             // wrapper, which would hand extend_from_slice the wrong type.
             out.extend_from_slice(&plain[..]);
@@ -482,11 +483,12 @@ impl Vault {
             .ok_or(VaultError::Corrupt)?;
         let data_key = crypto::unwrap_key(&self.root_key, &row.wrapped_key)
             .map_err(|_| VaultError::WrongPassword)?;
-        let (nonce, ct) = self
+        let chunk = self
             .store
             .get_attachment_chunk(id, index)?
             .ok_or(VaultError::Corrupt)?;
-        let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
+        let plain = crypto::decrypt(&data_key, &chunk.nonce, &chunk.ciphertext)
+            .map_err(|_| VaultError::Corrupt)?;
         // Copy out of the Zeroizing buffer; the caller owns this one.
         Ok(plain.to_vec())
     }

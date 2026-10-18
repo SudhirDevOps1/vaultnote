@@ -415,19 +415,24 @@ impl Store {
             .map_err(StoreError::from)
     }
 
-    /// `(nonce, ciphertext)` for one chunk, or None if that index is absent.
+    /// One chunk, or None if that index is absent.
     pub fn get_attachment_chunk(
         &self,
         id: &str,
         index: u32,
-    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, StoreError> {
+    ) -> Result<Option<StoredChunk>, StoreError> {
         Ok(self
             .conn
             .query_row(
                 "SELECT nonce, ciphertext FROM attachment_chunks
                  WHERE id = ?1 AND chunk_index = ?2",
                 params![id, index as i64],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| {
+                    Ok(StoredChunk {
+                        nonce: r.get(0)?,
+                        ciphertext: r.get(1)?,
+                    })
+                },
             )
             .optional()?)
     }
@@ -458,6 +463,15 @@ impl Store {
         };
         Ok(self.conn.query_row(sql, [], |r| r.get(0))?)
     }
+}
+
+/// One stored chunk: the nonce that encrypted it, and the ciphertext with
+/// its Poly1305 tag. Named rather than written as `(Vec<u8>, Vec<u8>)` so the
+/// two byte strings are not interchangeable at a call site.
+#[derive(Debug, Clone)]
+pub struct StoredChunk {
+    pub nonce: Vec<u8>,
+    pub ciphertext: Vec<u8>,
 }
 
 /// One row of `attachment_meta`. Every field is ciphertext or opaque.
