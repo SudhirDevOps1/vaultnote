@@ -35,7 +35,7 @@ fn xchacha20poly1305_matches_libsodium() {
         let mut expected = kat.ct.to_vec();
         expected.extend_from_slice(kat.tag);
 
-        let got = crypto::encrypt_with_nonce(&kat.key, &kat.nonce, kat.msg)
+        let got = crypto::encrypt_with_nonce(&kat.key, &kat.nonce, kat.aad, kat.msg)
             .unwrap_or_else(|e| panic!("{}: encrypt failed: {e}", kat.name));
 
         assert_eq!(got.len(), expected.len(), "{}: length mismatch", kat.name);
@@ -54,7 +54,7 @@ fn xchacha20poly1305_decrypts_libsodium_vectors() {
         let mut blob = kat.ct.to_vec();
         blob.extend_from_slice(kat.tag);
 
-        let pt = crypto::decrypt(&kat.key, &kat.nonce, &blob)
+        let pt = crypto::decrypt_with_aad(&kat.key, &kat.nonce, kat.aad, &blob)
             .unwrap_or_else(|e| panic!("{}: decrypt failed: {e}", kat.name));
         assert_eq!(&pt[..], kat.msg, "{}: plaintext mismatch", kat.name);
     }
@@ -64,14 +64,31 @@ fn xchacha20poly1305_decrypts_libsodium_vectors() {
 fn a_flipped_bit_breaks_a_libsodium_vector() {
     // Guards the test above: if authentication were not actually running, the
     // decrypt assertion would pass on corrupted data too.
+    //
+    // Uses the vector's own AAD deliberately. Calling the no-AAD `decrypt` here
+    // would make this pass for the wrong reason: the tag would fail on the AAD
+    // mismatch rather than on the corrupted byte, and the assertion would prove
+    // nothing at all.
     let kat = &XCHACHA_KATS[0];
     let mut blob = kat.ct.to_vec();
     blob.extend_from_slice(kat.tag);
     blob[0] ^= 0x01;
 
     assert!(
-        crypto::decrypt(&kat.key, &kat.nonce, &blob).is_err(),
+        crypto::decrypt_with_aad(&kat.key, &kat.nonce, kat.aad, &blob).is_err(),
         "a corrupted ciphertext must not authenticate"
+    );
+}
+
+#[test]
+fn wrong_aad_does_not_authenticate() {
+    let kat = &XCHACHA_KATS[0];
+    let mut blob = kat.ct.to_vec();
+    blob.extend_from_slice(kat.tag);
+
+    assert!(
+        crypto::decrypt_with_aad(&kat.key, &kat.nonce, &[], &blob).is_err(),
+        "the AAD must be authenticated, not ignored"
     );
 }
 

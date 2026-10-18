@@ -19,7 +19,7 @@ use std::fmt;
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::rand_core::RngCore;
-use chacha20poly1305::aead::{Aead, KeyInit, OsRng};
+use chacha20poly1305::aead::{Aead, KeyInit, OsRng, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use zeroize::Zeroizing;
 
@@ -142,43 +142,66 @@ pub fn generate_salt() -> Zeroizing<[u8; SALT_LEN]> {
 // Payload encryption
 // ---------------------------------------------------------------------------
 
-/// Encrypt `plaintext`, returning `(nonce, ciphertext || tag)`.
+/// Encrypt `plaintext` under a freshly generated random nonce, returning
+/// `(nonce, ciphertext || tag)`.
+///
+/// Every message gets its own nonce. Reusing a nonce under one key breaks the
+/// security of *both* messages, so this is the only function any vault code
+/// path is allowed to call.
 pub fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CryptoError> {
-    let cipher = cipher_from(key)?;
     let mut nonce = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce);
-    let ct = cipher
-        .encrypt(XNonce::from_slice(&nonce), plaintext)
-        .map_err(|_| CryptoError::Encrypt)?;
+    let ct = encrypt_with_nonce(key, &nonce, &[], plaintext)?;
     Ok((nonce.to_vec(), ct))
 }
 
-/// Encrypt with a caller-supplied nonce, returning `ciphertext || tag`.
+/// Encrypt with a caller-supplied nonce and associated data, returning
+/// `ciphertext || tag`.
 ///
-/// Production never calls this. [`encrypt`] generates a fresh random nonce for
-/// every message, which is required for security; pinning a nonce is only
-/// useful when comparing against a published test vector, which is what
-/// `tests/kat.rs` does. Encrypting two different messages under the same nonce
-/// and key destroys the security of both, so this is deliberately kept off
-/// every vault code path.
+/// Vaultnote stores no associated data, so every production call passes an
+/// empty `aad`. This exists so `tests/kat.rs` can reproduce libsodium's own
+/// published vector, which authenticates a non-empty AAD. That is the only way
+/// to check the AEAD construction itself rather than only its no-AAD special
+/// case.
+///
+/// Pinning a nonce is unsafe for real use — see [`encrypt`].
 pub fn encrypt_with_nonce(
     key: &[u8; KEY_LEN],
     nonce: &[u8; NONCE_LEN],
+    aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     let cipher = cipher_from(key)?;
     cipher
-        .encrypt(XNonce::from_slice(nonce), plaintext)
+        .encrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::Encrypt)
 }
 
-/// Decrypt `ciphertext` under `key`.
+/// Decrypt `ciphertext || tag` under `key`, with no associated data.
 ///
 /// Returns [`CryptoError::Decrypt`] if the key is wrong or a single bit of the
-/// ciphertext or nonce was altered — Poly1305 authentication catches both.
+/// ciphertext, nonce or AAD was altered — Poly1305 authentication catches all
+/// three.
 pub fn decrypt(
     key: &[u8; KEY_LEN],
     nonce: &[u8],
+    ciphertext: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+    decrypt_with_aad(key, nonce, &[], ciphertext)
+}
+
+/// Decrypt with associated data. See [`encrypt_with_nonce`] on why no vault
+/// code path supplies any.
+pub fn decrypt_with_aad(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8],
+    aad: &[u8],
     ciphertext: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
     if nonce.len() != NONCE_LEN {
@@ -186,7 +209,13 @@ pub fn decrypt(
     }
     let cipher = cipher_from(key)?;
     let pt = cipher
-        .decrypt(XNonce::from_slice(nonce), ciphertext)
+        .decrypt(
+            XNonce::from_slice(nonce),
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
+        )
         .map_err(|_| CryptoError::Decrypt)?;
     Ok(Zeroizing::new(pt))
 }
