@@ -153,6 +153,25 @@ pub fn encrypt(key: &[u8; KEY_LEN], plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8
     Ok((nonce.to_vec(), ct))
 }
 
+/// Encrypt with a caller-supplied nonce, returning `ciphertext || tag`.
+///
+/// Production never calls this. [`encrypt`] generates a fresh random nonce for
+/// every message, which is required for security; pinning a nonce is only
+/// useful when comparing against a published test vector, which is what
+/// `tests/kat.rs` does. Encrypting two different messages under the same nonce
+/// and key destroys the security of both, so this is deliberately kept off
+/// every vault code path.
+pub fn encrypt_with_nonce(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8; NONCE_LEN],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, CryptoError> {
+    let cipher = cipher_from(key)?;
+    cipher
+        .encrypt(XNonce::from_slice(nonce), plaintext)
+        .map_err(|_| CryptoError::Encrypt)
+}
+
 /// Decrypt `ciphertext` under `key`.
 ///
 /// Returns [`CryptoError::Decrypt`] if the key is wrong or a single bit of the
