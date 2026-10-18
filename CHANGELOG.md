@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0 (2026-10-18)
+
+
+### Features
+
+* encrypted chunked attachments in the storage layer ([c8de502](https://github.com/SudhirDevOps1/vaultnote/commit/c8de502a274a84f0f14acc1907d80c8c2edc9d6e))
+
+
+### Bug Fixes
+
+* let release-please own one manifest instead of three ([14a27a5](https://github.com/SudhirDevOps1/vaultnote/commit/14a27a5e69cf0cc6d5164b28014f08f8f63b37a3))
+* three type errors in the attachment layer ([0ab16a2](https://github.com/SudhirDevOps1/vaultnote/commit/0ab16a2e07448ed64c5f0314608c140e279c0d2c))
+
+## Changelog
+
 All notable changes to Vaultnote are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
