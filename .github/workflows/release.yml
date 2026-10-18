@@ -71,13 +71,10 @@ jobs:
         run: |
           $tag = "${{ steps.tag.outputs.tag }}"
           if ($tag -notmatch '^v\d+\.\d+\.\d+-(alpha|beta|rc)') {
-            throw @"
-Refusing to publish $tag.
-
-Only pre-release tags are allowed while the application is unverified: it
-has never been built into a binary or launched. Tag as v0.1.0-alpha.1
-instead, or delete this guard once the app has actually been run.
-"@
+            Write-Host "Refusing to publish $tag"
+            Write-Host "Only pre-release tags are allowed while the app is unverified."
+            Write-Host "It has never been built into a binary or launched. Use v0.1.0-alpha.1."
+            exit 1
           }
           Write-Host "$tag is a pre-release tag - proceeding"
 
