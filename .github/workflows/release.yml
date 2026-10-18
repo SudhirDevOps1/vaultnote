@@ -1,0 +1,139 @@
+name: Release
+
+# Cut a release by pushing a version tag:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# Nothing is published unless every gate in the build job passes, so a tag on
+# a broken commit produces a failed workflow rather than a broken installer.
+#
+# The build runs on a GitHub runner. It must not: the app is developed on a
+# 2-core 15W ultrabook where `tauri build` (LTO, opt-level="s",
+# codegen-units=1) would run for hours and shut the machine down. A debug
+# build is fine locally for iterating; release packaging is not.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build a release from (e.g. v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the tag being built
+        id: tag
+        shell: pwsh
+        run: |
+          $t = if ("${{ github.event.inputs.tag }}" -ne "") { "${{ github.event.inputs.tag }}" }
+               else { "${{ github.ref_name }}" }
+          if (-not $t.StartsWith("v")) { throw "tag must start with 'v', got '$t'" }
+          "tag=$t" >> $env:GITHUB_OUTPUT
+          Write-Host "Building release: $t"
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+          shared-key: release
+
+      # The same gates as CI, re-run here. A tag can be pushed onto a commit
+      # that never went green, and this is the last point where that is
+      # visible before an installer is handed to someone.
+      - name: Verify tests still pass on this exact commit
+        working-directory: src-tauri
+        run: cargo test -- --test-threads=1
+
+      - name: Version in Cargo.toml matches the tag
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ steps.tag.outputs.tag }}" -replace '^v', ''
+          $cargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+?)"').Matches[0].Groups[1].Value
+          $tauri = (Get-Content ../src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          Write-Host "tag=$tagVersion  Cargo.toml=$cargo  tauri.conf.json=$tauri"
+          if ($cargo -ne $tagVersion -or $tauri -ne $tagVersion) {
+            throw "version mismatch: tag is $tagVersion but manifests say $cargo / $tauri"
+          }
+
+      # Unsigned. A Windows installer with no Authenticode signature triggers
+      # SmartScreen, and that is the correct trade for a pre-1.0 build: signing
+      # needs a code-signing certificate, which costs money and would be
+      # attached to a project that has not been security-reviewed yet.
+      #
+      # One build only. An earlier draft ran `--no-bundle` first and then the
+      # real build, which compiled everything twice for no benefit.
+      - name: Build installers
+        run: pnpm tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List produced artifacts
+        shell: pwsh
+        run: |
+          $dirs = @("src-tauri/target/release/bundle")
+          foreach ($d in $dirs) {
+            if (Test-Path $d) {
+              Get-ChildItem $d -Recurse -File |
+                Where-Object { $_.Extension -in ".exe", ".msi" } |
+                ForEach-Object { Write-Host ("{0}  {1:N1} MB" -f $_.FullName, ($_.Length/1MB)) }
+            }
+          }
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $files = @(Get-ChildItem "src-tauri/target/release/bundle" -Recurse -File -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Extension -in ".exe", ".msi" })
+          if ($files.Count -eq 0) { throw "no installer artifacts were produced" }
+
+          gh release create $env:TAG `
+            $files.FullName `
+            --title "Vaultnote $env:TAG" `
+            --generate-notes `
+            --prerelease:$([bool]($env:TAG -match 'alpha|beta|rc')) `
+            --verify-tag
+          Write-Host "released $env:TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vaultnote-${{ steps.tag.outputs.tag }}
+          path: src-tauri/target/release/bundle/**/*.exe
+          retention-days: 30
