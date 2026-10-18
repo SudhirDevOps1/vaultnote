@@ -5,28 +5,28 @@
       "release-type": "simple",
       "package-name": "vaultnote",
       "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": false,
       "include-component-in-tag": false,
       "draft": false,
-      "prerelease": false,
       "extra-files": [
         {
           "type": "json",
           "path": "package.json",
           "jsonpath": "$.version"
-        },
-        {
-          "type": "toml",
-          "path": "src-tauri/Cargo.toml",
-          "xpath": "/project/version"
-        },
-        {
-          "type": "json",
-          "path": "src-tauri/tauri.conf.json",
-          "jsonpath": "$.version"
         }
       ]
     }
-  }
+  },
+  "//": [
+    "Only package.json is managed here on purpose.",
+    "",
+    "src-tauri/Cargo.toml and src-tauri/tauri.conf.json carry the same",
+    "version, and release.yml rewrites both from package.json immediately",
+    "before it builds. Doing it there rather than here avoids release-please's",
+    "TOML extra-file support, which rejected a plain xpath and failed the",
+    "whole action with a JSONPath error.",
+    "",
+    "The sync lives in the release workflow rather than in CI because the",
+    "build is what needs the three files to agree; leaving them out of sync on",
+    "main is harmless as long as release.yml fixes them before packaging."
+  ]
 }

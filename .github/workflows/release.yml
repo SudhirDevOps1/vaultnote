@@ -77,17 +77,41 @@ jobs:
         working-directory: src-tauri
         run: cargo test -- --test-threads=1
 
-      - name: Version in Cargo.toml matches the tag
-        working-directory: src-tauri
+      - name: Sync manifests to the tag version
+        shell: pwsh
+        run: |
+          # release-please owns package.json only. Cargo.toml and
+          # tauri.conf.json are rewritten here so all three agree before the
+          # build, which keeps release-please away from its TOML extra-file
+          # handling.
+          $tagVersion = "${{ steps.tag.outputs.tag }}" -replace '^v', ''
+          Write-Host "syncing manifests to $tagVersion"
+
+          $cargo = "src-tauri/Cargo.toml"
+          (Get-Content $cargo -Raw) -replace '(?m)^version = "[^"]*"', "version = `"$tagVersion`"" |
+            Set-Content $cargo -NoNewline
+
+          $conf = "src-tauri/tauri.conf.json"
+          $j = Get-Content $conf -Raw | ConvertFrom-Json
+          $j.version = $tagVersion
+          $j | ConvertTo-Json -Depth 20 | Set-Content $conf
+
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json)
+          $pkg.version = $tagVersion
+          $pkg | ConvertTo-Json -Depth 20 | Set-Content package.json
+
+      - name: Verify all manifests agree
         shell: pwsh
         run: |
           $tagVersion = "${{ steps.tag.outputs.tag }}" -replace '^v', ''
-          $cargo = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+?)"').Matches[0].Groups[1].Value
-          $tauri = (Get-Content ../src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          Write-Host "tag=$tagVersion  Cargo.toml=$cargo  tauri.conf.json=$tauri"
-          if ($cargo -ne $tagVersion -or $tauri -ne $tagVersion) {
-            throw "version mismatch: tag is $tagVersion but manifests say $cargo / $tauri"
+          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"(.+?)"').Matches[0].Groups[1].Value
+          $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $pkg = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Write-Host "tag=$tagVersion  Cargo.toml=$cargo  tauri.conf.json=$tauri  package.json=$pkg"
+          if ($cargo -ne $tagVersion -or $tauri -ne $tagVersion -or $pkg -ne $tagVersion) {
+            throw "version mismatch after sync"
           }
+          Write-Host "all manifests agree"
 
       # Unsigned. A Windows installer with no Authenticode signature triggers
       # SmartScreen, and that is the correct trade for a pre-1.0 build: signing
