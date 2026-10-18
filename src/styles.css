@@ -164,12 +164,90 @@ kbd {
   border-bottom: 1px solid var(--line);
 }
 
-.body {
-  flex: 1; padding: 16px; resize: none;
+/* Toolbar sits between the tag row and the panes. */
+.toolbar {
+  display: flex; align-items: center; gap: 3px; flex-wrap: wrap;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.toolbar button {
+  min-width: 28px; padding: 3px 7px;
+  font-size: 12px; line-height: 1.4;
+  background: transparent; border-color: transparent;
+  color: var(--muted);
+}
+.toolbar button:hover { background: var(--panel-2); color: var(--fg); border-color: var(--line); }
+.toolbar code { font-size: 11px; }
+.tb-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
+
+.viewswitch { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.viewswitch button {
+  padding: 2px 9px; font-size: 11.5px;
+  border: 0; border-radius: 0; background: transparent; color: var(--muted);
+}
+.viewswitch button.on { background: var(--accent); color: #fff; }
+
+/* The pane container owns the flex space; the textarea and the preview are
+   its children. */
+.panes {
+  flex: 1; min-height: 0;
+  display: flex;
+}
+.panes .body {
+  flex: 1; min-width: 0;
+  padding: 16px; resize: none; border: 0; border-radius: 0;
   font-family: ui-monospace, "Cascadia Code", monospace;
   font-size: 13.5px; line-height: 1.65;
 }
-.body:disabled, .title:disabled, .tags:disabled { opacity: 0.6; }
+.panes.split .body { border-right: 1px solid var(--line); }
+
+.preview {
+  flex: 1; min-width: 0;
+  overflow-y: auto;
+  padding: 16px 20px;
+  font-size: 14px; line-height: 1.7;
+}
+
+/* ---- rendered markdown ---- */
+
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3 {
+  margin: 1.3em 0 0.5em; line-height: 1.25; font-weight: 650;
+}
+.markdown-body h1 { font-size: 1.6rem; }
+.markdown-body h2 { font-size: 1.32rem; }
+.markdown-body h3 { font-size: 1.12rem; }
+.markdown-body p, .markdown-body li { margin: 0.55em 0; }
+.markdown-body ul, .markdown-body ol { padding-left: 1.5em; }
+.markdown-body li { margin: 0.2em 0; }
+.markdown-body blockquote {
+  margin: 0.8em 0; padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+.markdown-body code {
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 0.88em;
+  background: var(--panel-2);
+  padding: 1px 5px; border-radius: 4px;
+}
+.markdown-body pre {
+  margin: 0.8em 0; padding: 12px 14px;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  overflow-x: auto;
+}
+.markdown-body pre code { background: none; padding: 0; font-size: 0.86em; }
+.markdown-body a { color: var(--accent); }
+.markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0; }
+.markdown-body table { border-collapse: collapse; margin: 0.8em 0; }
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--line); padding: 5px 10px; text-align: left;
+}
+.markdown-body img { max-width: 100%; }
+.markdown-body input[type="checkbox"] { margin-right: 6px; }
+
+.title:disabled, .tags:disabled { opacity: 0.6; }
 
 .placeholder, .trash-view {
   align-items: flex-start; justify-content: center;
