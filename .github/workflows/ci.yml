@@ -173,3 +173,14 @@ jobs:
             fi
           done
           rm -f canary.db canary.pem
+
+      # A workflow with a syntax error is recorded as a zero-second failed run
+      # against the commit - the kind that gets scrolled past - and the only
+      # symptom is that a release silently stops working. release.yml shipped
+      # broken exactly this way: a PowerShell here-string inside a YAML block
+      # scalar, which nothing in the test suite was positioned to notice.
+      - name: Validate workflow YAML
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --disable-pip-version-check pyyaml
+          python3 scripts/validate_workflows.py
