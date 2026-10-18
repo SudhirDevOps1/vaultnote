@@ -33,16 +33,35 @@ CREATE TABLE IF NOT EXISTS items (
     deleted_at   INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS attachments (
-    id      TEXT PRIMARY KEY,
-    item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-    meta_ct BLOB NOT NULL,   -- encrypted {filename, mime, size}
-    data_ct BLOB NOT NULL    -- encrypted file bytes
-);
-
 CREATE INDEX IF NOT EXISTS idx_items_alive   ON items(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_items_updated ON items(updated_at);
-CREATE INDEX IF NOT EXISTS idx_attach_item   ON attachments(item_id);
+
+-- Attachments are stored one row per chunk rather than one blob per file.
+-- A 2 GB attachment held as a single BLOB would have to be fully decrypted
+-- into memory before anything could be read, which is an OOM waiting for a
+-- large file. Chunking bounds the working set to one chunk.
+--
+-- NB: this schema was revised before the application was ever launched, so
+-- there is no migration path and the initial version stayed at 1. The next
+-- change to it will need one.
+CREATE TABLE IF NOT EXISTS attachment_meta (
+    id          TEXT    PRIMARY KEY,
+    item_id     TEXT    NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    nonce       BLOB    NOT NULL,   -- for the encrypted metadata blob
+    wrapped_key BLOB    NOT NULL,   -- the attachment's own data key
+    meta_ct     BLOB    NOT NULL,   -- encrypted {filename, mime, size, chunks}
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attachment_chunks (
+    id          TEXT    NOT NULL REFERENCES attachment_meta(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    nonce       BLOB    NOT NULL,
+    ciphertext  BLOB    NOT NULL,
+    PRIMARY KEY (id, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_attach_item ON attachment_meta(item_id);
 "#;
 
 #[derive(Debug)]
@@ -332,6 +351,135 @@ impl Store {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
     }
+
+    // -- attachments ------------------------------------------------------
+
+    /// Write an attachment and all of its chunks in a single transaction.
+    ///
+    /// Atomic on purpose: a crash midway must not leave a file that looks
+    /// complete in the UI and then fails to decrypt later.
+    pub fn insert_attachment(
+        &mut self,
+        meta: &AttachmentMetaRow,
+        chunks: &[(u32, Vec<u8>, Vec<u8>)],
+    ) -> Result<(), StoreError> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO attachment_meta
+                (id, item_id, nonce, wrapped_key, meta_ct, created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                meta.id,
+                meta.item_id,
+                meta.nonce,
+                meta.wrapped_key,
+                meta.meta_ct,
+                meta.created_at
+            ],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO attachment_chunks (id, chunk_index, nonce, ciphertext)
+                 VALUES(?1, ?2, ?3, ?4)",
+            )?;
+            for (index, nonce, ct) in chunks {
+                stmt.execute(params![meta.id, *index as i64, nonce, ct])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_attachment_meta(&self, id: &str) -> Result<Option<AttachmentMetaRow>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id, item_id, nonce, wrapped_key, meta_ct, created_at
+                 FROM attachment_meta WHERE id = ?1",
+                params![id],
+                row_to_attachment,
+            )
+            .optional()?)
+    }
+
+    pub fn list_attachments_for_item(
+        &self,
+        item_id: &str,
+    ) -> Result<Vec<AttachmentMetaRow>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_id, nonce, wrapped_key, meta_ct, created_at
+             FROM attachment_meta WHERE item_id = ?1 ORDER BY created_at",
+        )?;
+        let rows = stmt.query_map(params![item_id], row_to_attachment)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StoreError::from)
+    }
+
+    /// `(nonce, ciphertext)` for one chunk, or None if that index is absent.
+    pub fn get_attachment_chunk(
+        &self,
+        id: &str,
+        index: u32,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>)>, StoreError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT nonce, ciphertext FROM attachment_chunks
+                 WHERE id = ?1 AND chunk_index = ?2",
+                params![id, index as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn count_attachment_chunks(&self, id: &str) -> Result<u32, StoreError> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM attachment_chunks WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )?;
+        Ok(n as u32)
+    }
+
+    pub fn delete_attachment(&self, id: &str) -> Result<usize, StoreError> {
+        self.conn
+            .execute("DELETE FROM attachment_meta WHERE id = ?1", params![id])
+            .map_err(StoreError::from)
+    }
+
+    /// Attachments belonging to live notes only.
+    pub fn count_attachments(&self, live_only: bool) -> Result<i64, StoreError> {
+        let sql = if live_only {
+            "SELECT COUNT(*) FROM attachment_meta m
+             JOIN items i ON i.id = m.item_id
+             WHERE i.deleted_at IS NULL"
+        } else {
+            "SELECT COUNT(*) FROM attachment_meta"
+        };
+        Ok(self.conn.query_row(sql, [], |r| r.get(0))?)
+    }
+}
+
+/// One row of `attachment_meta`. Every field is ciphertext or opaque.
+#[derive(Debug, Clone)]
+pub struct AttachmentMetaRow {
+    pub id: String,
+    pub item_id: String,
+    pub nonce: Vec<u8>,
+    pub wrapped_key: Vec<u8>,
+    pub meta_ct: Vec<u8>,
+    pub created_at: i64,
+}
+
+fn row_to_attachment(r: &rusqlite::Row<'_>) -> rusqlite::Result<AttachmentMetaRow> {
+    Ok(AttachmentMetaRow {
+        id: r.get(0)?,
+        item_id: r.get(1)?,
+        nonce: r.get(2)?,
+        wrapped_key: r.get(3)?,
+        meta_ct: r.get(4)?,
+        created_at: r.get(5)?,
+    })
 }
 
 fn row_to_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<ItemRow> {

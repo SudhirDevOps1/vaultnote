@@ -19,6 +19,31 @@ use crate::db::{new_id, ItemRow, Store, StoreError};
 /// 2^-256 and is harder to reason about.
 const VERIFIER: [u8; crypto::KEY_LEN] = *b"vaultnote-password-verifier-v01!";
 
+/// Attachment chunk size. 1 MiB: large enough that per-chunk overhead is
+/// negligible, small enough that decrypting a 500 MB file never holds more
+/// than a megabyte of plaintext plus its ciphertext at a time.
+pub const CHUNK_SIZE: usize = 1024 * 1024;
+
+/// What actually gets encrypted into `attachment_meta.meta_ct`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredAttachmentMeta {
+    filename: String,
+    mime: String,
+    size: u64,
+    chunks: u32,
+}
+
+/// Decrypted attachment metadata, safe to hand to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentInfo {
+    pub id: String,
+    pub item_id: String,
+    pub filename: String,
+    pub mime: String,
+    pub size: u64,
+    pub chunks: u32,
+}
+
 /// Plaintext shape of a note. Exists in memory only.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Note {
@@ -304,6 +329,168 @@ impl Vault {
             .ok()
             .flatten()
             .unwrap_or([0u8; crypto::SALT_LEN])
+    }
+
+    // -- attachments --------------------------------------------------------
+
+    /// Encrypt and store a file against a note.
+    ///
+    /// The filename and MIME type go inside the encrypted metadata rather than
+    /// a plaintext column. A filename like `card-2026-04.pdf` or
+    /// `salary.png` leaks more than most people assume, and this app's entire
+    /// premise is that the file reveals nothing.
+    ///
+    /// The data is split into [`CHUNK_SIZE`] pieces and each is encrypted
+    /// independently under its own random nonce. That bounds memory for large
+    /// files, and it means a truncated or missing chunk is detected rather than
+    /// silently producing a short file.
+    pub fn add_attachment(
+        &mut self,
+        item_id: &str,
+        filename: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<String, VaultError> {
+        if self.store.get_item(item_id)?.is_none() {
+            return Err(VaultError::Corrupt);
+        }
+
+        let id = new_id();
+        let data_key = crypto::generate_key();
+        let wrapped =
+            crypto::wrap_key(&self.root_key, &data_key).map_err(|_| VaultError::Crypto)?;
+
+        let mut chunks: Vec<(u32, Vec<u8>, Vec<u8>)> = Vec::new();
+        for (i, chunk) in data.chunks(CHUNK_SIZE).enumerate() {
+            // Fresh random nonce per chunk. Reusing one across chunks under
+            // the same key would leak plaintext XOR.
+            let (nonce, ct) = crypto::encrypt(&data_key, chunk).map_err(|_| VaultError::Crypto)?;
+            chunks.push((i as u32, nonce, ct));
+        }
+
+        let meta = serde_json::to_vec(&StoredAttachmentMeta {
+            filename,
+            mime,
+            size: data.len() as u64,
+            chunks: chunks.len() as u32,
+        })
+        .map_err(|_| VaultError::Serialisation)?;
+        let (meta_nonce, meta_ct) =
+            crypto::encrypt(&data_key, &meta).map_err(|_| VaultError::Crypto)?;
+
+        self.store.insert_attachment(
+            &crate::db::AttachmentMetaRow {
+                id: id.clone(),
+                item_id: item_id.to_string(),
+                nonce: meta_nonce,
+                wrapped_key: wrapped,
+                meta_ct,
+                created_at: now_ms(),
+            },
+            &chunks,
+        )?;
+        Ok(id)
+    }
+
+    /// Metadata for one attachment. Decrypts to get the filename, so this
+    /// fails with a wrong-password style error if the session key is wrong.
+    pub fn attachment_info(&self, id: &str) -> Result<Option<AttachmentInfo>, VaultError> {
+        let Some(row) = self.store.get_attachment_meta(id)? else {
+            return Ok(None);
+        };
+        let data_key = crypto::unwrap_key(&self.root_key, &row.wrapped_key)
+            .map_err(|_| VaultError::WrongPassword)?;
+        let plain = crypto::decrypt(&data_key, &row.nonce, &row.meta_ct)
+            .map_err(|_| VaultError::Corrupt)?;
+        let meta: StoredAttachmentMeta =
+            serde_json::from_slice(&plain).map_err(|_| VaultError::Corrupt)?;
+        Ok(Some(AttachmentInfo {
+            id: row.id,
+            filename: meta.filename,
+            mime: meta.mime,
+            size: meta.size,
+            chunks: meta.chunks,
+            item_id: row.item_id,
+        }))
+    }
+
+    pub fn list_attachments(&self, item_id: &str) -> Result<Vec<AttachmentInfo>, VaultError> {
+        let mut out = Vec::new();
+        for row in self.store.list_attachments_for_item(item_id)? {
+            let data_key = crypto::unwrap_key(&self.root_key, &row.wrapped_key)
+                .map_err(|_| VaultError::WrongPassword)?;
+            let plain = crypto::decrypt(&data_key, &row.nonce, &row.meta_ct)
+                .map_err(|_| VaultError::Corrupt)?;
+            let meta: StoredAttachmentMeta =
+                serde_json::from_slice(&plain).map_err(|_| VaultError::Corrupt)?;
+            out.push(AttachmentInfo {
+                id: row.id,
+                item_id: row.item_id,
+                filename: meta.filename,
+                mime: meta.mime,
+                size: meta.size,
+                chunks: meta.chunks,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Decrypt a whole attachment into memory.
+    ///
+    /// The working set is one chunk, not one file — but the result still
+    /// arrives in one piece, so callers handling large files should prefer
+    /// [`Self::read_attachment_chunk`].
+    pub fn read_attachment(&self, id: &str) -> Result<Vec<u8>, VaultError> {
+        let info = self.attachment_info(id)?.ok_or(VaultError::Corrupt)?;
+        let row = self
+            .store
+            .get_attachment_meta(id)?
+            .ok_or(VaultError::Corrupt)?;
+        let data_key = crypto::unwrap_key(&self.root_key, &row.wrapped_key)
+            .map_err(|_| VaultError::WrongPassword)?;
+
+        let stored = self.store.count_attachment_chunks(id)?;
+        if stored != info.chunks {
+            return Err(VaultError::Corrupt);
+        }
+
+        let mut out = Vec::with_capacity(info.size as usize);
+        for index in 0..info.chunks {
+            let (nonce, ct) = self
+                .store
+                .get_attachment_chunk(id, index)?
+                .ok_or(VaultError::Corrupt)?;
+            let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
+            out.extend_from_slice(&plain);
+        }
+
+        // Trusting the chunk count alone would let a truncated attachment look
+        // complete. The size is authenticated too, so check it.
+        if out.len() as u64 != info.size {
+            return Err(VaultError::Corrupt);
+        }
+        Ok(out)
+    }
+
+    /// Decrypt one chunk. Used by the UI to stream a large file.
+    pub fn read_attachment_chunk(&self, id: &str, index: u32) -> Result<Vec<u8>, VaultError> {
+        let row = self
+            .store
+            .get_attachment_meta(id)?
+            .ok_or(VaultError::Corrupt)?;
+        let data_key = crypto::unwrap_key(&self.root_key, &row.wrapped_key)
+            .map_err(|_| VaultError::WrongPassword)?;
+        let (nonce, ct) = self
+            .store
+            .get_attachment_chunk(id, index)?
+            .ok_or(VaultError::Corrupt)?;
+        let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
+        Ok(plain)
+    }
+
+    pub fn delete_attachment(&self, id: &str) -> Result<(), VaultError> {
+        self.store.delete_attachment(id)?;
+        Ok(())
     }
 
     // -- internals ----------------------------------------------------------
