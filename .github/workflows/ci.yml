@@ -4,6 +4,10 @@ name: CI
 # here: this project was developed on a 2-core 15W ultrabook where a local
 # `cargo build` saturates the CPU and shuts the machine down. See
 # scripts/build-safe.ps1 for the local workaround.
+#
+# Caching is not an optimisation here, it is the difference between a ~3.5
+# minute run and a ~20 minute one. Without it every run re-downloads and
+# re-compiles roughly 370 crates, most of which never change.
 
 on:
   push:
@@ -11,6 +15,8 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A second push supersedes an in-flight run for the same branch, so rapid
+# fix-push cycles do not queue up behind each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -18,7 +24,15 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Quieter, deterministic diagnostics.
+  #
+  # GOTCHA: RUSTFLAGS participates in cargo's build fingerprint. Changing this
+  # value — even adding a lint flag — invalidates every cached artifact and
+  # forces a full rebuild even when the cache hit is green. Treat changes here
+  # as expensive.
   RUSTFLAGS: "-D warnings"
+  # Keeps incremental artifacts around between runs; without this a restored
+  # cache still recompiles everything it can no longer incrementally patch.
+  CARGO_INCREMENTAL: "1"
 
 jobs:
   frontend:
@@ -27,18 +41,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Must run BEFORE setup-node: the node action needs pnpm on PATH to
+      # locate the store directory it is about to cache. Reversing these two
+      # steps silently disables the cache with no error.
       - uses: pnpm/action-setup@v4
+        # version comes from the `packageManager` field in package.json
 
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Report pnpm store cache
+        run: pnpm store path
+        shell: pwsh
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # `tsc --noEmit && vite build` — the typecheck is the gate here, not the
-      # bundle size.
+      # `tsc --noEmit && vite build` — the typecheck is the gate, not bundle size.
       - name: Typecheck and build
         run: pnpm build
 
@@ -56,9 +78,32 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # Caches three things, and the third is the expensive one:
+      #   ~/.cargo/registry + ~/.cargo/git  — downloaded crate sources
+      #   src-tauri/target                  — compiled artifacts (~1.9 GB)
+      #
+      # cache-on-failure matters: the key is keyed on Cargo.lock, so a run that
+      # fails still populated the cache for every crate it got through, and the
+      # next run picks up from there instead of restarting the whole build.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: src-tauri -> target
+          cache-on-failure: true
+          shared-key: rust
+          # Clean in the sense of "skip cargo clean", not "delete the cache".
+          clean: false
+
+      - name: Report cargo cache state
+        shell: pwsh
+        run: |
+          $t = "target"
+          if (Test-Path $t) {
+            $mb = [math]::Round((Get-ChildItem $t -Recurse -File -ErrorAction SilentlyContinue |
+                   Measure-Object Length -Sum).Sum / 1MB)
+            Write-Host "target/ restored: $mb MB"
+          } else {
+            Write-Host "target/ empty - cold build"
+          }
 
       # `tauri_build` and `generate_context!` resolve `frontendDist` at compile
       # time. This job does not build the frontend, so it plants a placeholder
@@ -73,11 +118,14 @@ jobs:
         run: cargo check --all-targets
 
       # The gates that matter, in order:
-      #   crypto.rs   — Argon2id + XChaCha20-Poly1305 properties
-      #   db.rs       — schema and CRUD
-      #   vault.rs    — end-to-end note lifecycle
-      #   session.rs  — idle auto-lock
+      #   crypto.rs        — Argon2id + XChaCha20-Poly1305 properties
+      #   db.rs            — schema and CRUD
+      #   vault.rs         — end-to-end note lifecycle
+      #   session.rs       — idle auto-lock
       #   vault_leakage.rs — plaintext markers absent from vault.db and its WAL
+      #
+      # Serialised because the leakage tests share temp paths and one uses
+      # Argon2id at the full 64 MiB cost.
       - name: cargo test
         run: cargo test -- --test-threads=1
 
@@ -113,3 +161,17 @@ jobs:
             exit 1
           fi
           echo "No vault or key material tracked."
+
+      - name: Confirm .gitignore would have caught them
+        run: |
+          set -euo pipefail
+          touch canary.db canary.pem
+          for f in canary.db canary.pem; do
+            if git check-ignore -q "$f"; then
+              echo "OK: $f is ignored"
+            else
+              echo "::error::$f is NOT ignored by .gitignore"
+              exit 1
+            fi
+          done
+          rm -f canary.db canary.pem
