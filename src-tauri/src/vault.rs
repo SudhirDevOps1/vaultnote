@@ -369,8 +369,8 @@ impl Vault {
         }
 
         let meta = serde_json::to_vec(&StoredAttachmentMeta {
-            filename,
-            mime,
+            filename: filename.to_string(),
+            mime: mime.to_string(),
             size: data.len() as u64,
             chunks: chunks.len() as u32,
         })
@@ -461,7 +461,9 @@ impl Vault {
                 .get_attachment_chunk(id, index)?
                 .ok_or(VaultError::Corrupt)?;
             let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
-            out.extend_from_slice(&plain);
+            // `plain` is Zeroizing<Vec<u8>>; index it rather than borrowing the
+            // wrapper, which would hand extend_from_slice the wrong type.
+            out.extend_from_slice(&plain[..]);
         }
 
         // Trusting the chunk count alone would let a truncated attachment look
@@ -485,7 +487,8 @@ impl Vault {
             .get_attachment_chunk(id, index)?
             .ok_or(VaultError::Corrupt)?;
         let plain = crypto::decrypt(&data_key, &nonce, &ct).map_err(|_| VaultError::Corrupt)?;
-        Ok(plain)
+        // Copy out of the Zeroizing buffer; the caller owns this one.
+        Ok(plain.to_vec())
     }
 
     pub fn delete_attachment(&self, id: &str) -> Result<(), VaultError> {
