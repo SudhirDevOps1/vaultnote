@@ -3,9 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Must stay identical to `app.security.csp` in src-tauri/tauri.conf.json.
+      A browser applies every CSP it is given, so a meta tag that omits an
+      origin the config lists does not relax anything - it intersects, and the
+      stricter of the two wins. Leaving ipc.localhost out of connect-src here
+      blocks every invoke() even though the Rust side configured it correctly.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: http://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
     />
     <title>Vaultnote</title>
   </head>
